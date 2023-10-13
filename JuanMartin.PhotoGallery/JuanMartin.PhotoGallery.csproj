@@ -1,0 +1,21 @@
+﻿<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net7.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Remove="JuanMartin.PhotoGallery.Test\**" />
+    <Content Remove="JuanMartin.PhotoGallery.Test\**" />
+    <EmbeddedResource Remove="JuanMartin.PhotoGallery.Test\**" />
+    <None Remove="JuanMartin.PhotoGallery.Test\**" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\JuanMartin.Kernel\JuanMartin.Kernel\JuanMartin.Kernel.csproj" />
+    <ProjectReference Include="..\..\JuanMartin.Models\JuanMartin.Models\JuanMartin.Models.csproj" />
+  </ItemGroup>
+
+</Project>
