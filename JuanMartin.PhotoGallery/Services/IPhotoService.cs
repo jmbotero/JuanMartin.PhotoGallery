@@ -33,7 +33,7 @@ namespace JuanMartin.PhotoGallery.Services
 
         void StoreActivationCode(int userId, string activationCode);
 
-        (int, User) VerifyActivationCode(string activationCode);
+        (int, User?) VerifyActivationCode(string activationCode);
 
         User UpdateUserPassword(int userId, string userName, string password);
 
@@ -62,7 +62,7 @@ namespace JuanMartin.PhotoGallery.Services
         int GetGalleryPageCount(int pageSize);
 
         (string ImageIdsList, long RowCount) GetPhotographyIdsList(
-          int userID,
+          int userId,
           IPhotoService.ImageListSource source,
           string searchQuery,
           int OrderId);
@@ -75,14 +75,11 @@ namespace JuanMartin.PhotoGallery.Services
 
         int UpdatePhotographyRanking(long id, int userId, int rank);
 
-        int UpdatePhotographyDetails(long id, int userId, string location);
+        int UpdatePhotographyLocation(long id, int userId, string location);
 
         int AddTag(int userId, string tag, long id);
 
-        int AddTag(string connectionString, int userId, string tag, long id);
-
         void AddTags(
-          string connectionString,
           int userId,
           string tags,
           IEnumerable<Photography> photographies);
@@ -92,8 +89,6 @@ namespace JuanMartin.PhotoGallery.Services
         IEnumerable<string> GetAllTags(int pageId = 1);
 
         IEnumerable<string> GetAllLocations(int pageId = 1);
-
-        IRecordSet ExecuteSqlStatement(string statement);
 
         Order GetCurrentActiveOrder(int userId);
 
@@ -116,20 +111,18 @@ namespace JuanMartin.PhotoGallery.Services
         void UpdateOrderIndex(int userId, int orderId, long photographyId, int index);
 
         IEnumerable<Photography> LoadPhotographies(
-          string connectionString,
           string directory,
           string acceptedExtensions,
           bool directoryIsLink);
 
         IEnumerable<Photography> LoadPhotographiesWithLocation(
-          string connectionString,
           string directory,
           string acceptedExtensions,
           bool directoryIsLink,
           int userId,
           string location);
 
-        long AddPhotography(AdapterMySql dbAdapter, string name, string path, string title);
+        long AddPhotography(string name, string path, string title);
 
     }
 }

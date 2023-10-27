@@ -33,26 +33,28 @@ namespace JuanMartin.PhotoGallery.Controllers
         /// Get the next or previous number to a specific (current) number
         /// in a comma-separated list of numbers
         /// <summary>
-        /// <param name="currenId"></param>
+        /// <param name="currentId"></param>
         /// <param name="idList"></param>
         /// <param name="position"></param>
         /// <returns></returns>
         public static int GetImageId(
-              int currenId,
+              int currentId,
               string idList,
-              ImageRelativePosition position)
+              ImageRelativePosition position,
+              int instanceCount = 1,
+              char separator = ',')
         {
             int imageId = -1;
             int index = -1;
-            if (string.IsNullOrEmpty(idList))
+            if (!string.IsNullOrEmpty(idList))
             {
                 idList = "," + idList;
-                int currentStringIndex = idList.IndexOf(currenId.ToString());
+                int currentStringIndex = idList.GetInstanceIndex(currentId.ToString(), instanceCount, separator);
                 string head = (currentStringIndex > 2) ? idList.Substring(0, currentStringIndex - 2) : "";
-                string tail = idList.Replace(head, "");
-                int stringIndex = currentStringIndex+tail.IndexOf(',');
+                string tail = (head != "" && idList.Length > currentStringIndex) ? idList.Replace(head, "") : idList.Substring(currentStringIndex + 1);
+                int stringIndex = currentStringIndex + tail.IndexOf(',');
                 int currentIndex = head.Ocurrences(',');
-          
+
                 string[] ids = idList.Split(',', StringSplitOptions.RemoveEmptyEntries);
                 if ((currentStringIndex > 2 && position == ImageRelativePosition.Previous) || (currentStringIndex < idList.Length - 1 && position == ImageRelativePosition.Next))
                 {
@@ -69,8 +71,8 @@ namespace JuanMartin.PhotoGallery.Controllers
                                 break;
                             }
                     }
-                if (index != -1)
-                    imageId = Convert.ToInt32(ids[index]);
+                    if (index != -1)
+                        imageId = Convert.ToInt32(ids[index]);
                 }
             }
             return imageId;
@@ -100,19 +102,19 @@ namespace JuanMartin.PhotoGallery.Controllers
             string match = string.Empty;
             if (regex1.IsMatch(serverVariable))
                 match = regex1.Match(serverVariable).Groups[0].Value;
-            if (regex2.IsMatch(serverVariable.Substring(0, 4)))
+            if (regex2.IsMatch(serverVariable[..4]))
                 match += regex2.Match(serverVariable).Groups[0].Value;
             return !string.IsNullOrEmpty(match) ? (true, match) : (false, string.Empty);
         }
 
         public static string GetClientRemoteId(HttpContext context)
         {
-            string serverVariable = context.GetServerVariable("REMOTE_HOST");
+            string? serverVariable = context.GetServerVariable("REMOTE_HOST");
             if (string.IsNullOrEmpty(serverVariable))
-                serverVariable = context.Features.Get<IHttpConnectionFeature>()?.RemoteIpAddress.ToString();
+                serverVariable = Convert.ToString(context.Features.Get<IHttpConnectionFeature>()?.RemoteIpAddress);
             if (string.IsNullOrEmpty(serverVariable))
                 serverVariable = context.GetServerVariable("REMOTE_USER");
-            return serverVariable;
+            return (serverVariable != null) ? serverVariable : "";
         }
 
         public static void SendVerificationEmail(
@@ -132,15 +134,17 @@ namespace JuanMartin.PhotoGallery.Controllers
             };
             string subject = "Reset Password";
             string body = "Hi,<br/><br/>We got request for reset your account password. Please click on the below link to reset your password<br/><br/>Click this <a href=" + passwordResetLink + ">reset password link</a>";
-            using (MailMessage message = new MailMessage(from, to)
+            using (var message = new MailMessage(from, to)
             {
                 Subject = subject,
                 Body = body,
                 IsBodyHtml = true
             })
+            {
                 smtpClient.Send(message);
+            }
         }
-
+    
         public static string GetRedirectUrl(
           RedirectResponseModel redirect,
           HttpUtility.GalleryViewTypes overwriteAction = HttpUtility.GalleryViewTypes.None,
@@ -150,13 +154,14 @@ namespace JuanMartin.PhotoGallery.Controllers
             if (redirect == null || !(redirect.RemoteHost != ""))
                 return controllerName + "/" + str;
             controllerName = redirect.Controller;
-            string action = redirect.Action;
+             string action = redirect.Action;
             if (overwriteAction == GalleryViewTypes.None && action != overwriteAction.ToString())
             {
                 return $"{controllerName}/{EnumExtensions.GetDescription(GalleryViewTypes.Index)}";
             }
             string thisAction = overwriteAction.ToString();
-            Dictionary<string, object>? data = (redirect != null) ? redirect.RouteData : null;
+            var data = (redirect != null) ? redirect.RouteData : null;
+            
             var routeValues = (data != null) ? new RouteValueDictionary(data) : null;
 
             return $"{controllerName}/{thisAction}/{PrepareRouteValues(routeValues, thisAction)}";

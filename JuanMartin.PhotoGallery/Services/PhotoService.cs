@@ -6,22 +6,20 @@
 
 using JuanMartin.Kernel;
 using JuanMartin.Kernel.Adapters;
+using JuanMartin.Kernel.Extesions;
 using JuanMartin.Kernel.Messaging;
 using JuanMartin.Kernel.Utilities;
-using JuanMartin.Kernel.Extesions;
 using JuanMartin.Models.Gallery;
 using JuanMartin.PhotoGallery.Models;
-using Microsoft.AspNetCore.Hosting;
-using Microsoft.Extensions.Configuration;
 using System.Collections.Specialized;
 using System.Data;
-using System.Runtime.CompilerServices;
 using System.Web;
+
 namespace JuanMartin.PhotoGallery.Services
 {
     public class PhotoService : IPhotoService
     {
-        private readonly  IExchangeRequestReply _dbAdapter;
+        private readonly IExchangeRequestReply _dbAdapter;
         private const int MaximumFileNameLength = 30;
         public bool IsMobile { get; set; } = false;
         public string ConnectionString { get; set; } = "";
@@ -33,8 +31,8 @@ namespace JuanMartin.PhotoGallery.Services
 
         public PhotoService(string? connectionString)
         {
-              if (connectionString == null) throw new ArgumentNullException(nameof(connectionString));
-              else
+            if (connectionString == null) throw new ArgumentNullException(nameof(connectionString));
+            else
             {
                 _dbAdapter = (IExchangeRequestReply)new AdapterMySql(connectionString);
             }
@@ -49,289 +47,228 @@ namespace JuanMartin.PhotoGallery.Services
             ConnectionString = configuration.GetStringConfigurationValue("DefaultConnection", "", "ConnectionStrings");
         }
 
+        private ValueHolder ExecuteSqlStatement(Type source, string statement, string[] returnItems = null, string sender = "Gallery")
+        {
+            string ParseProcedureName(string s)
+            {
+                string proc = "";
+
+                if (!string.IsNullOrEmpty(s))
+                {
+                    int i = s.IndexOf('(');
+                    proc = s[..i];
+                }
+
+                return proc;
+            };
+
+            if (_dbAdapter == null)
+                throw new ApplicationException("MySql connection not set.");
+
+            string procedureName = ParseProcedureName(statement);
+            if (procedureName == "")
+                throw new ArgumentException($"Could not parse procedure name  from'{statement}'.");
+
+            var request = new Message("Command", CommandType.Text.ToString());
+            request.AddData((object)new ValueHolder(procedureName, statement));
+            request.AddSender(sender, source.ToString());
+
+            _dbAdapter.Send(request);
+
+            if (returnItems != null)
+            {
+                IRecordSet reply = (IRecordSet)_dbAdapter.Receive();
+
+                if (reply.Data != null)
+                {
+                    ValueHolder result = new ValueHolder(reply.Data);
+
+                    foreach (var item in returnItems)
+                    {
+                        var annotations = reply.Data.GetAnnotationByValue(1);
+                        if (annotations != null && annotations.GetAnnotation(item) != null)
+                            throw new ArgumentException($"Procudure {procedureName} does not have return value '{item}'.");
+                    }
+                    return result;
+                }
+            }
+
+            return null;
+        }
+
         public IEnumerable<Photography> GetAllPhotographies(int userId, int pageId = 1)
         {
-            if (this._dbAdapter == null)
-                throw new ApplicationException("MySql connection not set.");
-            Message message = new Message("Command", CommandType.StoredProcedure.ToString());
-            int num = IsMobile ? this.MobilePageSize : this.PageSize;
-            string command = $"uspGetAllPhotographies('{pageId}','{num}','{userId}')";
-            ValueHolder valueHolder = new ValueHolder("PhotoGraphies", command);
-            message.AddData(valueHolder);
-            message.AddSender("uspGetAllPhotographies", typeof(Photography).ToString());
-            this._dbAdapter.Send((IMessage)message);
-            IRecordSet reply = (IRecordSet)this._dbAdapter.Receive();
-            return (IEnumerable<Photography>)PhotoService.MapPhotographyListFromDatabaseReplyToEntityModel(userId, reply);
+            int pageSize = IsMobile ? MobilePageSize : PageSize;
+            string command = $"uspGetAllPhotographies('{pageId}','{pageSize}','{userId}')";
+            var reply = ExecuteSqlStatement(typeof(Photography), command);
+
+            return PhotoService.MapPhotographyListFromDatabaseReplyToEntityModel(userId, reply);
         }
 
         public int GetGalleryPageCount(int pageSize)
         {
-            if (this._dbAdapter == null)
-                throw new ApplicationException("MySql connection not set.");
-            Message message1 = new Message("Command", CommandType.StoredProcedure.ToString());
-            Message message2 = message1;
-            DefaultInterpolatedStringHandler interpolatedStringHandler = new DefaultInterpolatedStringHandler(19, 1);
-            interpolatedStringHandler.AppendLiteral("uspGetPageCount('");
-            interpolatedStringHandler.AppendFormatted<int>(pageSize);
-            interpolatedStringHandler.AppendLiteral("')");
-            ValueHolder valueHolder = new ValueHolder("uspGetPageCount", (object)interpolatedStringHandler.ToStringAndClear());
-            message2.AddData((object)valueHolder);
-            message1.AddSender("Gallery", typeof(Photography).ToString());
-            this._dbAdapter.Send((IMessage)message1);
-            return (int)((IRecordSet)this._dbAdapter.Receive()).Data.GetAnnotationByValue((object)1).GetAnnotation("pageCount").Value;
-        }
+            string retunValue = "pageCount";
+            string command = $"uspGetPageCount('{pageSize}')";
+            var reply = ExecuteSqlStatement(typeof(Photography), command, new[] { retunValue });
+            if (reply != null)
+                reply = reply.GetAnnotationByValue(1);
 
-        public IRecordSet ExecuteSqlStatement(string statement)
-        {
-            if (this._dbAdapter == null)
-                throw new ApplicationException("MySql connection not set.");
-            Message message = new Message("Command", CommandType.Text.ToString());
-            message.AddData((object)new ValueHolder("GetPhotographies", (object)statement));
-            message.AddSender("Photography", typeof(Photography).ToString());
-            this._dbAdapter.Send((IMessage)message);
-            return (IRecordSet)this._dbAdapter.Receive();
+            return (reply != null) ? (int)reply.GetAnnotation(retunValue).Value : -1;
         }
 
         public (string ImageIdsList, long RowCount) GetPhotographyIdsList(
-          int userID,
+          int userId,
           IPhotoService.ImageListSource source,
           string searchQuery,
           int OrderId)
         {
-            if (this._dbAdapter == null)
-                throw new ApplicationException("MySql connection not set.");
-            Message message1 = new Message("Command", CommandType.StoredProcedure.ToString());
-            Message message2 = message1;
-            DefaultInterpolatedStringHandler interpolatedStringHandler = new DefaultInterpolatedStringHandler(37, 4);
-            interpolatedStringHandler.AppendLiteral("uspGetPhotographyIdsList('");
-            interpolatedStringHandler.AppendFormatted<int>(userID);
-            interpolatedStringHandler.AppendLiteral("','");
-            interpolatedStringHandler.AppendFormatted<int>((int)source);
-            interpolatedStringHandler.AppendLiteral("','");
-            interpolatedStringHandler.AppendFormatted(searchQuery);
-            interpolatedStringHandler.AppendLiteral("','");
-            interpolatedStringHandler.AppendFormatted<int>(OrderId);
-            interpolatedStringHandler.AppendLiteral("')");
-            ValueHolder valueHolder = new ValueHolder("uspGetPhotographyIdsList", (object)interpolatedStringHandler.ToStringAndClear());
-            message2.AddData((object)valueHolder);
-            message1.AddSender("Photography", typeof(Photography).ToString());
-            this._dbAdapter.Send((IMessage)message1);
-            IRecordSet irecordSet = (IRecordSet)this._dbAdapter.Receive();
-            return ("," + (string)irecordSet.Data.GetAnnotationByValue((object)1).GetAnnotation("Ids").Value + ",", (long)irecordSet.Data.GetAnnotationByValue((object)1).GetAnnotation("RowCount").Value);
+            string[] returnItems = new[] { "ids", "rowCount" };
+            string command = $"uspGetPhotographyIdsList('{userId}','{source}','{searchQuery}','{OrderId}')";
+            var reply = ExecuteSqlStatement(typeof(Photography), command, returnItems);
+            if (reply != null)
+                reply = reply.GetAnnotationByValue(1);
+
+            return (reply != null) ? ("," + (string)reply.GetAnnotation(returnItems[0]).Value + ",",
+                                                        (long)reply.GetAnnotation(returnItems[1]).Value) :
+                                              ("", -1);
         }
 
         public Photography GetPhotographyById(long photographyId, int userId)
         {
-            if (this._dbAdapter == null)
-                throw new ApplicationException("MySql connection not set.");
-            Message message1 = new Message("Command", CommandType.StoredProcedure.ToString());
-            Message message2 = message1;
-            DefaultInterpolatedStringHandler interpolatedStringHandler = new DefaultInterpolatedStringHandler(23, 2);
-            interpolatedStringHandler.AppendLiteral("uspGetPotography('");
-            interpolatedStringHandler.AppendFormatted<long>(photographyId);
-            interpolatedStringHandler.AppendLiteral("','");
-            interpolatedStringHandler.AppendFormatted<int>(userId);
-            interpolatedStringHandler.AppendLiteral("')");
-            ValueHolder valueHolder = new ValueHolder("uspGetPotography", (object)interpolatedStringHandler.ToStringAndClear());
-            message2.AddData((object)valueHolder);
-            message1.AddSender("Photography", typeof(Photography).ToString());
-            this._dbAdapter.Send((IMessage)message1);
-            IRecordSet reply = (IRecordSet)this._dbAdapter.Receive();
-            List<Photography> entityModel = PhotoService.MapPhotographyListFromDatabaseReplyToEntityModel(userId, reply);
-            return entityModel.Count != 0 ? entityModel[0] : (Photography)null;
+            string command = $"uspGetPotography('{photographyId}','{userId}')";
+            var reply = ExecuteSqlStatement(typeof(Photography), command);
+
+            List<Photography> photographies = PhotoService.MapPhotographyListFromDatabaseReplyToEntityModel(userId, reply);
+            return (photographies != null && photographies.Count > 0) ? photographies[0] : null;
         }
 
         public int UpdatePhotographyRanking(long photographyId, int userId, int rank)
         {
             if (userId == -1)
                 return -1;
-            if (this._dbAdapter == null)
-                throw new ApplicationException("MySql connection not set.");
-            Message message1 = new Message("Command", CommandType.StoredProcedure.ToString());
-            Message message2 = message1;
-            DefaultInterpolatedStringHandler interpolatedStringHandler = new DefaultInterpolatedStringHandler(26, 3);
-            interpolatedStringHandler.AppendLiteral("uspUpdateRanking('");
-            interpolatedStringHandler.AppendFormatted<int>(userId);
-            interpolatedStringHandler.AppendLiteral("','");
-            interpolatedStringHandler.AppendFormatted<long>(photographyId);
-            interpolatedStringHandler.AppendLiteral("','");
-            interpolatedStringHandler.AppendFormatted<int>(rank);
-            interpolatedStringHandler.AppendLiteral("')");
-            ValueHolder valueHolder = new ValueHolder("uspUpdateRanking", (object)interpolatedStringHandler.ToStringAndClear());
-            message2.AddData((object)valueHolder);
-            message1.AddSender("Photography", typeof(Photography).ToString());
-            this._dbAdapter.Send((IMessage)message1);
-            return (int)((IRecordSet)this._dbAdapter.Receive()).Data.GetAnnotationByValue((object)1).GetAnnotation("id").Value;
+
+            string retunValue = "id";
+            string command = $"uspUpdateRanking('{userId}','{photographyId}','{rank}')";
+            var reply = ExecuteSqlStatement(typeof(Photography), command, new[] { retunValue });
+            if (reply != null)
+                reply = reply.GetAnnotationByValue(1);
+
+            return (reply != null) ? (int)reply.GetAnnotation(retunValue).Value : -1;
         }
 
-        public int UpdatePhotographyDetails(long photographyId, int userId, string location)
-        {
-            if (userId == -1)
-                return -1;
-            if (this._dbAdapter == null)
-                throw new ApplicationException("MySql connection not set.");
-            Message message1 = new Message("Command", CommandType.StoredProcedure.ToString());
-            Message message2 = message1;
-            DefaultInterpolatedStringHandler interpolatedStringHandler = new DefaultInterpolatedStringHandler(37, 3);
-            interpolatedStringHandler.AppendLiteral("uspUpdatePhotographyDetails('");
-            interpolatedStringHandler.AppendFormatted<int>(userId);
-            interpolatedStringHandler.AppendLiteral("','");
-            interpolatedStringHandler.AppendFormatted<long>(photographyId);
-            interpolatedStringHandler.AppendLiteral("','");
-            interpolatedStringHandler.AppendFormatted(location);
-            interpolatedStringHandler.AppendLiteral("')");
-            ValueHolder valueHolder = new ValueHolder("uspUpdatePhotographyDetails", (object)interpolatedStringHandler.ToStringAndClear());
-            message2.AddData((object)valueHolder);
-            message1.AddSender("Photography", typeof(Photography).ToString());
-            this._dbAdapter.Send((IMessage)message1);
-            return (int)((IRecordSet)this._dbAdapter.Receive()).Data.GetAnnotationByValue((object)1).GetAnnotation("id").Value;
-        }
-
-        public int UpdatePhotographyDetails(
-          string connectionString,
+        public int UpdatePhotographyLocation(
           long photographyId,
           int userId,
           string location)
         {
             if (userId == -1)
                 return -1;
-            IExchangeRequestReply iexchangeRequestReply = (IExchangeRequestReply)new AdapterMySql(connectionString);
-            Message message1 = new Message("Command", CommandType.StoredProcedure.ToString());
-            Message message2 = message1;
-            DefaultInterpolatedStringHandler interpolatedStringHandler = new DefaultInterpolatedStringHandler(37, 3);
-            interpolatedStringHandler.AppendLiteral("uspUpdatePhotographyDetails('");
-            interpolatedStringHandler.AppendFormatted<int>(userId);
-            interpolatedStringHandler.AppendLiteral("','");
-            interpolatedStringHandler.AppendFormatted<long>(photographyId);
-            interpolatedStringHandler.AppendLiteral("','");
-            interpolatedStringHandler.AppendFormatted(location);
-            interpolatedStringHandler.AppendLiteral("')");
-            ValueHolder valueHolder = new ValueHolder("uspUpdatePhotographyDetails", (object)interpolatedStringHandler.ToStringAndClear());
-            message2.AddData((object)valueHolder);
-            message1.AddSender("Photography", typeof(Photography).ToString());
-            iexchangeRequestReply.Send((IMessage)message1);
-            return (int)((IRecordSet)iexchangeRequestReply.Receive()).Data.GetAnnotationByValue((object)1).GetAnnotation("id").Value;
+
+            string retunValue = "id";
+            string command = $"uspUpdatePhotographyLocation('{userId}','{photographyId}','{location}')";
+            var reply = ExecuteSqlStatement(typeof(Photography), command, new[] { retunValue });
+            if (reply != null)
+                reply = reply.GetAnnotationByValue(1);
+
+            return (reply != null) ? (int)reply.GetAnnotation(retunValue).Value : -1;
         }
 
         public User GetUser(string userName, string password)
         {
-            User user = (User)null;
-            if (this._dbAdapter == null)
-                throw new ApplicationException("MySql connection not set.");
-            Message message1 = new Message("Command", CommandType.StoredProcedure.ToString());
-            Message message2 = message1;
-            DefaultInterpolatedStringHandler interpolatedStringHandler = new DefaultInterpolatedStringHandler(17, 2);
-            interpolatedStringHandler.AppendLiteral("uspGetUser('");
-            interpolatedStringHandler.AppendFormatted(userName);
-            interpolatedStringHandler.AppendLiteral("','");
-            interpolatedStringHandler.AppendFormatted(password);
-            interpolatedStringHandler.AppendLiteral("')");
-            ValueHolder valueHolder = new ValueHolder("uspGetUser", (object)interpolatedStringHandler.ToStringAndClear());
-            message2.AddData((object)valueHolder);
-            message1.AddSender("User", typeof(User).ToString());
-            this._dbAdapter.Send((IMessage)message1);
-            IRecordSet irecordSet = (IRecordSet)this._dbAdapter.Receive();
-            if (irecordSet.Data != null && irecordSet.Data.GetAnnotation("Record") != null)
+            string[] returnItems = new[] { "id", "email" };
+            string command = $"uspGetUser('{userName}','{password}')";
+            var reply = ExecuteSqlStatement(typeof(Photography), command, returnItems);
+            if (reply != null)
+                reply = reply.GetAnnotationByValue(1);
+
+            User user = null;
+            if (reply != null && reply.GetAnnotation("Record") != null)
             {
-                foreach (ValueHolder annotation in irecordSet.Data.Annotations)
+                int id = (int)reply.GetAnnotation(returnItems[0]).Value;
+
+                if (id == -1)
+                    return null;
+
+                string email = (string)reply.GetAnnotation(returnItems[1]).Value;
+                user = new User()
                 {
-                    int num = (int)annotation.GetAnnotation("Id").Value;
-                    if (num == -1)
-                        return (User)null;
-                    string str = (string)annotation.GetAnnotation("Email").Value;
-                    user = new User()
-                    {
-                        UserId = num,
-                        UserName = userName,
-                        Password = password,
-                        Email = str
-                    };
-                }
+                    UserId = id,
+                    UserName = userName,
+                    Password = password,
+                    Email = email
+                };
             }
+
             return user;
         }
 
         public User VerifyEmail(string email)
         {
-            User user = (User)null;
-            if (this._dbAdapter == null)
-                throw new ApplicationException("MySql connection not set.");
-            Message message = new Message("Command", CommandType.StoredProcedure.ToString());
-            message.AddData((object)new ValueHolder("uspVerifyEmail", (object)("uspVerifyEmail('" + email + "')")));
-            message.AddSender("User", typeof(User).ToString());
-            this._dbAdapter.Send((IMessage)message);
-            IRecordSet irecordSet = (IRecordSet)this._dbAdapter.Receive();
-            if (irecordSet.Data != null && irecordSet.Data.GetAnnotation("Record") != null)
+            string[] returnItems = new[] { "id", "login" };
+            string command = $"uspVerifyEmail('{email}')";
+            var reply = ExecuteSqlStatement(typeof(User), command, returnItems);
+            if (reply != null)
+                reply = reply.GetAnnotationByValue(1);
+
+            User user = null;
+            if (reply != null && reply.GetAnnotation("Record") != null)
             {
-                foreach (ValueHolder annotation in irecordSet.Data.Annotations)
+                int id = (int)reply.GetAnnotation(returnItems[0]).Value;
+
+                if (id == -1)
+                    return null;
+
+                string userName = (string)reply.GetAnnotation(returnItems[1]).Value;
+                user = new User()
                 {
-                    int num = (int)annotation.GetAnnotation("Id").Value;
-                    string str = (string)annotation.GetAnnotation("Login").Value;
-                    user = new User()
-                    {
-                        UserId = num,
-                        UserName = str,
-                        Email = email
-                    };
-                }
+                    UserId = id,
+                    UserName = userName,
+                    Email = email
+                };
             }
+
             return user;
         }
 
         public int LoadSession(int userId)
         {
-            if (this._dbAdapter == null)
-                throw new ApplicationException("MySql connection not set.");
-            Message message1 = new Message("Command", CommandType.StoredProcedure.ToString());
-            Message message2 = message1;
-            DefaultInterpolatedStringHandler interpolatedStringHandler = new DefaultInterpolatedStringHandler(17, 1);
-            interpolatedStringHandler.AppendLiteral("uspAddSession('");
-            interpolatedStringHandler.AppendFormatted<int>(userId);
-            interpolatedStringHandler.AppendLiteral("')");
-            ValueHolder valueHolder = new ValueHolder("uspAddSession", (object)interpolatedStringHandler.ToStringAndClear());
-            message2.AddData((object)valueHolder);
-            message1.AddSender("Session", typeof(ISession).ToString());
-            this._dbAdapter.Send((IMessage)message1);
-            return (int)((IRecordSet)this._dbAdapter.Receive()).Data.GetAnnotationByValue((object)1).GetAnnotation("id").Value;
+            string retunValue = "id";
+            string command = $"uspAddSession('{userId}')";
+            var reply = ExecuteSqlStatement(typeof(ISession), command, new[] { retunValue });
+            if (reply != null)
+                reply = reply.GetAnnotationByValue(1);
+
+            return (reply != null) ? (int)reply.GetAnnotation(retunValue).Value : -1;
         }
 
         public RedirectResponseModel GetRedirectInfo(int userId, string remoteHost)
         {
-            RedirectResponseModel redirectInfo = (RedirectResponseModel)null;
-            if (this._dbAdapter == null)
-                throw new ApplicationException("MySql connection not set.");
-            Message message1 = new Message("Command", CommandType.StoredProcedure.ToString());
-            Message message2 = message1;
-            DefaultInterpolatedStringHandler interpolatedStringHandler = new DefaultInterpolatedStringHandler(29, 2);
-            interpolatedStringHandler.AppendLiteral("uspGetUserRedirectInfo('");
-            interpolatedStringHandler.AppendFormatted(remoteHost);
-            interpolatedStringHandler.AppendLiteral("','");
-            interpolatedStringHandler.AppendFormatted<int>(userId);
-            interpolatedStringHandler.AppendLiteral("')");
-            ValueHolder valueHolder = new ValueHolder("uspGetUserRedirectInfo", (object)interpolatedStringHandler.ToStringAndClear());
-            message2.AddData((object)valueHolder);
-            message1.AddSender("RedirectRequestModel", typeof(RedirectResponseModel).ToString());
-            this._dbAdapter.Send((IMessage)message1);
-            IRecordSet irecordSet = (IRecordSet)this._dbAdapter.Receive();
-            if (irecordSet.Data != null && irecordSet.Data.GetAnnotation("Record") != null)
+                if (remoteHost == "")
+                    return null;
+
+             string[] returnItems = new[] { "remoteHost", "controller","action", "routeId", "queryString" };
+            string command = $"uspGetUserRedirectInfo('{remoteHost}','{userId}')";
+            var reply = ExecuteSqlStatement(typeof(HttpContent), command, returnItems);
+            if (reply != null)
+                reply = reply.GetAnnotationByValue(1);
+
+            RedirectResponseModel redirectInfo = null;
+            if (reply != null && reply.GetAnnotation("Record") != null)
             {
-                foreach (ValueHolder annotation in irecordSet.Data.Annotations)
+                string controller = (string)reply.GetAnnotation(returnItems[1]).Value;
+                string action = (string)reply.GetAnnotation(returnItems[2]).Value;
+                long routeid = (long)reply.GetAnnotation(returnItems[3]).Value;
+                string queryString = (string)reply.GetAnnotation(returnItems[4]).Value;
+                Dictionary<string, object> routeValues = GenerateRouteValues( routeid, queryString);
+                redirectInfo = new RedirectResponseModel()
                 {
-                    string str1 = (string)annotation.GetAnnotation("RemoteHost").Value;
-                    if (str1 == "")
-                        return (RedirectResponseModel)null;
-                    string str2 = (string)annotation.GetAnnotation("Controller").Value;
-                    string str3 = (string)annotation.GetAnnotation("Action").Value;
-                    Dictionary<string, object> routeValues = this.GenerateRouteValues((long)(int)annotation.GetAnnotation("RouteID").Value, (string)annotation.GetAnnotation("QueryString").Value);
-                    redirectInfo = new RedirectResponseModel()
-                    {
-                        RemoteHost = str1,
-                        Controller = str2,
-                        Action = str3,
-                        RouteData = routeValues
-                    };
-                }
+                    RemoteHost = remoteHost,
+                    Controller = controller,
+                    Action = action,
+                    RouteData = routeValues
+                };
             }
+
             return redirectInfo;
         }
 
@@ -343,259 +280,204 @@ namespace JuanMartin.PhotoGallery.Services
           long routeId = -1,
           string queryString = "")
         {
-            if (this._dbAdapter == null)
-                throw new ApplicationException("MySql connection not set.");
-            Message message1 = new Message("Command", CommandType.StoredProcedure.ToString());
-            Message message2 = message1;
-            DefaultInterpolatedStringHandler interpolatedStringHandler = new DefaultInterpolatedStringHandler(39, 6);
-            interpolatedStringHandler.AppendLiteral("uspSetUserRedirectInfo('");
-            interpolatedStringHandler.AppendFormatted<int>(userId);
-            interpolatedStringHandler.AppendLiteral("','");
-            interpolatedStringHandler.AppendFormatted(remoteHost);
-            interpolatedStringHandler.AppendLiteral("','");
-            interpolatedStringHandler.AppendFormatted(controller);
-            interpolatedStringHandler.AppendLiteral("','");
-            interpolatedStringHandler.AppendFormatted(action);
-            interpolatedStringHandler.AppendLiteral("',");
-            interpolatedStringHandler.AppendFormatted<long>(routeId);
-            interpolatedStringHandler.AppendLiteral(",'");
-            interpolatedStringHandler.AppendFormatted(queryString);
-            interpolatedStringHandler.AppendLiteral("')");
-            ValueHolder valueHolder = new ValueHolder("uspSetUserRedirectInfo", (object)interpolatedStringHandler.ToStringAndClear());
-            message2.AddData((object)valueHolder);
-            message1.AddSender("RedirectRequestModel", typeof(RedirectResponseModel).ToString());
-            this._dbAdapter.Send((IMessage)message1);
-            Dictionary<string, object> routeValues = this.GenerateRouteValues(routeId, queryString);
-            return new RedirectResponseModel()
+            string command = $"uspSetUserRedirectInfo('{userId}','{remoteHost}')";
+            var reply = ExecuteSqlStatement(typeof(HttpContent), command) ?? throw new ApplicationException("Error storing redirect information.");
+            Dictionary<string, object> routeValues = GenerateRouteValues(routeId, queryString);
+            var redirectInfo = new RedirectResponseModel()
             {
                 RemoteHost = remoteHost,
                 Controller = controller,
                 Action = action,
                 RouteData = routeValues
             };
+        
+            return redirectInfo;
         }
 
         public Dictionary<string, object> GenerateRouteValues(long routeId, string queryString)
         {
             if (string.IsNullOrEmpty(queryString))
-                return (Dictionary<string, object>)null;
-            NameValueCollection nameValueCollection = new NameValueCollection();
-            Dictionary<string, object> routeValues = new Dictionary<string, object>();
+                return null;
+
+            NameValueCollection nameValueCollection = new();
+            Dictionary<string, object> routeValues = new();
             if (queryString.Length > 1)
-            {
+            { 
                 nameValueCollection = HttpUtility.ParseQueryString(queryString);
                 if (nameValueCollection != null)
                 {
-                    foreach (string allKey in nameValueCollection.AllKeys)
+                    foreach (string? key in nameValueCollection.AllKeys)
                     {
-                        if (allKey != null)
+                        if (key != null)
                         {
-                            object obj = (object)nameValueCollection[allKey];
-                            routeValues.Add(allKey, obj);
+                            object value = nameValueCollection[key];
+                            routeValues.Add(key, value);
                         }
                     }
                 }
             }
-            if (routeId > 0L && nameValueCollection["id"] == null)
-                routeValues.Add("id", (object)routeId);
+            if (routeId > 0 && nameValueCollection["id"] == null)
+                routeValues.Add("id", routeId);
             return routeValues;
         }
 
         public User AddUser(string userName, string password, string email)
         {
-            if (this._dbAdapter == null)
-                throw new ApplicationException("MySql connection not set.");
-            Message message1 = new Message("Command", CommandType.StoredProcedure.ToString());
-            Message message2 = message1;
-            DefaultInterpolatedStringHandler interpolatedStringHandler = new DefaultInterpolatedStringHandler(20, 3);
-            interpolatedStringHandler.AppendLiteral("uspAddUser('");
-            interpolatedStringHandler.AppendFormatted(userName);
-            interpolatedStringHandler.AppendLiteral("','");
-            interpolatedStringHandler.AppendFormatted(password);
-            interpolatedStringHandler.AppendLiteral("','");
-            interpolatedStringHandler.AppendFormatted(email);
-            interpolatedStringHandler.AppendLiteral("')");
-            ValueHolder valueHolder = new ValueHolder("uspAddUser", (object)interpolatedStringHandler.ToStringAndClear());
-            message2.AddData((object)valueHolder);
-            message1.AddSender("User", typeof(User).ToString());
-            this._dbAdapter.Send((IMessage)message1);
-            int num = (int)((IRecordSet)this._dbAdapter.Receive()).Data.GetAnnotationByValue((object)1).GetAnnotation("id").Value;
-            return new User()
+            string returnValue = "id";
+            string command = $"uspAddUser('{userName}','{password}','{email}')";
+            var reply = ExecuteSqlStatement(typeof(Photography), command);
+            if (reply != null)
+                reply = reply.GetAnnotationByValue(1);
+
+            if (reply != null && reply.GetAnnotation("Record") != null)
             {
-                UserId = num,
-                UserName = userName,
-                Password = "",
-                Email = email
-            };
+                int id = (int)reply.GetAnnotation(returnValue).Value;
+
+                if (id == -1)
+                    return null;
+
+                return new User()
+                {
+                    UserId = id,
+                    UserName = userName,
+                    Password = "",
+                    Email = email
+                };
+            }
+            else
+                throw new ApplicationException($"Error storing new user '{userName}'.");
         }
 
         public User UpdateUserPassword(int userId, string userName, string password)
         {
-            User user = (User)null;
-            if (this._dbAdapter == null)
-                throw new ApplicationException("MySql connection not set.");
-            Message message1 = new Message("Command", CommandType.StoredProcedure.ToString());
-            Message message2 = message1;
-            DefaultInterpolatedStringHandler interpolatedStringHandler = new DefaultInterpolatedStringHandler(31, 3);
-            interpolatedStringHandler.AppendLiteral("uspUpdateUserPassword('");
-            interpolatedStringHandler.AppendFormatted<int>(userId);
-            interpolatedStringHandler.AppendLiteral("','");
-            interpolatedStringHandler.AppendFormatted(userName);
-            interpolatedStringHandler.AppendLiteral("','");
-            interpolatedStringHandler.AppendFormatted(password);
-            interpolatedStringHandler.AppendLiteral("')");
-            ValueHolder valueHolder = new ValueHolder("uspUpdateUserPassword", (object)interpolatedStringHandler.ToStringAndClear());
-            message2.AddData((object)valueHolder);
-            message1.AddSender("User", typeof(User).ToString());
-            this._dbAdapter.Send((IMessage)message1);
-            IRecordSet irecordSet = (IRecordSet)this._dbAdapter.Receive();
-            if (irecordSet.Data != null && irecordSet.Data.GetAnnotation("Record") != null)
+            string command = $"uspUpdateUserPassword('{userId}','{userName}','{password}')";
+            string[] returnItems = new[] { "id", "email" };
+            var reply = ExecuteSqlStatement(typeof(User), command, returnItems);
+            if (reply != null)
+                reply = reply.GetAnnotationByValue(1);
+
+            User user = null;
+            if (reply != null && reply.GetAnnotation("Record") != null)
             {
-                foreach (ValueHolder annotation in irecordSet.Data.Annotations)
+                int id = (int)reply.GetAnnotation(returnItems[0]).Value;
+
+                if (id == -1)
+                    return null;
+
+                string email = (string)reply.GetAnnotation(returnItems[1]).Value;
+                user = new User()
                 {
-                    int int32 = Convert.ToInt32(annotation.GetAnnotation("Id").Value);
-                    string str = (string)annotation.GetAnnotation("Email").Value;
-                    user = new User()
-                    {
-                        UserId = int32,
-                        UserName = userName,
-                        Password = password,
-                        Email = str
-                    };
-                }
+                    UserId = id,
+                    UserName = userName,
+                    Password = password,
+                    Email = email
+                };
             }
+
             return user;
         }
 
         public void EndSession(int sessionId)
         {
-            if (this._dbAdapter == null)
-                throw new ApplicationException("MySql connection not set.");
-            Message message1 = new Message("Command", CommandType.StoredProcedure.ToString());
-            Message message2 = message1;
-            DefaultInterpolatedStringHandler interpolatedStringHandler = new DefaultInterpolatedStringHandler(15, 1);
-            interpolatedStringHandler.AppendLiteral("uspEndSession(");
-            interpolatedStringHandler.AppendFormatted<int>(sessionId);
-            interpolatedStringHandler.AppendLiteral(")");
-            ValueHolder valueHolder = new ValueHolder("uspEndSession", (object)interpolatedStringHandler.ToStringAndClear());
-            message2.AddData((object)valueHolder);
-            message1.AddSender("Session", typeof(int).ToString());
-            this._dbAdapter.Send((IMessage)message1);
+            string command = $"uspEndSession('{sessionId}')";
+            _ = ExecuteSqlStatement(typeof(ISession), command);
         }
 
         public void StoreActivationCode(int userId, string activationCode)
         {
-            if (this._dbAdapter == null)
-                throw new ApplicationException("MySql connection not set.");
-            Message message1 = new Message("Command", CommandType.StoredProcedure.ToString());
-            Message message2 = message1;
-            DefaultInterpolatedStringHandler interpolatedStringHandler = new DefaultInterpolatedStringHandler(29, 2);
-            interpolatedStringHandler.AppendLiteral("uspStoreActivationCode('");
-            interpolatedStringHandler.AppendFormatted<int>(userId);
-            interpolatedStringHandler.AppendLiteral("','");
-            interpolatedStringHandler.AppendFormatted(activationCode);
-            interpolatedStringHandler.AppendLiteral("')");
-            ValueHolder valueHolder = new ValueHolder("uspStoreActivationCode", (object)interpolatedStringHandler.ToStringAndClear());
-            message2.AddData((object)valueHolder);
-            message1.AddSender("ActivationCode", typeof(string).ToString());
-            this._dbAdapter.Send((IMessage)message1);
+            string command = $"uspStoreActivationCode('{userId}','{activationCode}')";
+            _ = ExecuteSqlStatement(typeof(User), command);
         }
 
-        public (int, User) VerifyActivationCode(string activationCode)
+        public (int, User?) VerifyActivationCode(string activationCode)
         {
-            User user = (User)null;
-            int num1 = -1;
-            if (this._dbAdapter == null)
-                throw new ApplicationException("MySql connection not set.");
-            Message message = new Message("Command", CommandType.StoredProcedure.ToString());
-            message.AddData((object)new ValueHolder("uspVerifyActivationCode", (object)("uspVerifyActivationCode('" + activationCode + "')")));
-            message.AddSender("ActivationCode", typeof(Guid).ToString());
-            this._dbAdapter.Send((IMessage)message);
-            IRecordSet irecordSet = (IRecordSet)this._dbAdapter.Receive();
-            if (irecordSet.Data != null && irecordSet.Data.GetAnnotation("Record") != null)
+            int errorCode = -1;
+
+            string command = $"uspVerifyActivationCode('{activationCode}')";
+            string[] returnItems = new[] { "id", "login", "email" , "password", "errorCode" };
+            var reply = ExecuteSqlStatement(typeof(User), command, returnItems);
+            if (reply != null)
+                reply = reply.GetAnnotationByValue(1);
+
+            User? user = null;
+            if (reply != null && reply.GetAnnotation("Record") != null)
             {
-                foreach (ValueHolder annotation in irecordSet.Data.Annotations)
+                int id = (int)reply.GetAnnotation(returnItems[0]).Value;
+
+                if (id == -1)
+                    return (-1 , null);
+
+                string userName = (string)reply.GetAnnotation(returnItems[1]).Value;
+                string email = (string)reply.GetAnnotation(returnItems[2]).Value;
+                string password = (string)reply.GetAnnotation(returnItems[3]).Value;
+                errorCode = (int)reply.GetAnnotation(returnItems[4]).Value;
+
+                user = new User()
                 {
-                    num1 = (int)annotation.GetAnnotation("ErrorCode").Value;
-                    int num2 = (int)annotation.GetAnnotation("Id").Value;
-                    string str = (string)annotation.GetAnnotation("Login").Value;
-                    user = new User()
-                    {
-                        UserId = num2,
-                        UserName = str,
-                        Password = "",
-                        Email = ""
-                    };
-                }
+                    UserId = id,
+                    UserName = userName,
+                    Password = password,
+                    Email = email
+                };
             }
-            return (num1, user);
+
+            return (errorCode, user);
         }
 
-        private static Order MapOrderFromDatabaseReplyToEntityModel(int userId, IRecordSet reply)
+        private static Order MapOrderFromDatabaseReplyToEntityModel(int userId, ValueHolder reply)
         {
-            Order entityModel = (Order)null;
-            if (reply.Data != null && reply.Data.GetAnnotation("Record") != null)
+            Order order = null;
+            if (reply != null && reply.GetAnnotation("Record") != null)
             {
-                foreach (ValueHolder annotation in reply.Data.Annotations)
+                foreach (ValueHolder annotation in reply.Annotations)
                 {
-                    int int32_1 = Convert.ToInt32(annotation.GetAnnotation("Id").Value);
-                    string input = (string)annotation.GetAnnotation("Number").Value;
-                    if (string.IsNullOrEmpty(input))
-                        input = Guid.Empty.ToString();
-                    Guid guid = Guid.Parse(input);
-                    DateTime dateTime = Convert.ToDateTime(annotation.GetAnnotation("CreatedDtm").Value);
-                    string str = (string)annotation.GetAnnotation("Status").Value;
-                    int int32_2 = Convert.ToInt32(annotation.GetAnnotation("Count").Value);
-                    Order.OrderStatus orderStatus;
-                    switch (str)
-                    {
-                        case "inProcess":
-                            orderStatus = (Order.OrderStatus)1;
-                            break;
-                        case "complete":
-                            orderStatus = (Order.OrderStatus)2;
-                            break;
-                        default:
-                            orderStatus = (Order.OrderStatus)0;
-                            break;
-                    }
-                    entityModel = new Order(int32_1, userId, guid, dateTime, int32_2, orderStatus);
+                    int id = Convert.ToInt32(annotation.GetAnnotation("id").Value);
+                    string number = (string)annotation.GetAnnotation("number").Value;
+                    if (string.IsNullOrEmpty(number))
+                        number = Guid.Empty.ToString();
+                    Guid guid = Guid.Parse(number);
+                    DateTime createdDtm = Convert.ToDateTime(annotation.GetAnnotation("createdDtm").Value);
+                    string status = (string)annotation.GetAnnotation("status").Value;
+                    Order.OrderStatusType orderStatus = EnumExtensions.GetValueFromDescription<Order.OrderStatusType>(status);
+                    int count = Convert.ToInt32(annotation.GetAnnotation("count").Value);
+
+                    order = new Order(id, userId, guid, createdDtm, count, orderStatus);
                 }
             }
-            return entityModel;
+            return order;
         }
 
         private static List<Photography> MapPhotographyListFromDatabaseReplyToEntityModel(
           int userId,
-          IRecordSet reply)
+          ValueHolder reply)
         {
             List<Photography> entityModel = new List<Photography>();
-            if (reply.Data != null && reply.Data.GetAnnotation("Record") != null)
+            if (reply != null && reply.GetAnnotation("Record") != null)
             {
-                foreach (ValueHolder annotation in reply.Data.Annotations)
+                foreach (ValueHolder annotation in reply.Annotations)
                 {
-                    long num1 = (long)annotation.GetAnnotation("Id").Value;
-                    int int32 = Convert.ToInt32(annotation.GetAnnotation("Source").Value);
-                    string str1 = (string)annotation.GetAnnotation("Path").Value;
-                    string str2 = (string)annotation.GetAnnotation("Filename").Value;
-                    string str3 = (string)annotation.GetAnnotation("Title").Value;
-                    string str4 = (string)annotation.GetAnnotation("Location").Value;
-                    long num2 = (long)annotation.GetAnnotation("Rank").Value;
-                    long int64 = Convert.ToInt64(annotation.GetAnnotation("AverageRank").Value);
-                    string str5 = (string)annotation.GetAnnotation("Tags").Value;
-                    Photography photography = new Photography()
+                    long id = (long)annotation.GetAnnotation("id").Value;
+                    int source = Convert.ToInt32(annotation.GetAnnotation("source").Value);
+                    string path = (string)annotation.GetAnnotation("path").Value;
+                    string fileName = (string)annotation.GetAnnotation("filename").Value;
+                    string title = (string)annotation.GetAnnotation("title").Value;
+                    string location = (string)annotation.GetAnnotation("location").Value;
+                    long rank = (long)annotation.GetAnnotation("rank").Value;
+                    long averageRank = Convert.ToInt64(annotation.GetAnnotation("averageRank").Value);
+                    string tags = (string)annotation.GetAnnotation("tags").Value;
+                    var photography = new Photography()
                     {
                         UserId = userId,
-                        Id = num1,
-                        FileName = str2,
-                        Path = str1,
-                        Source = (Photography.PhysicalSource)int32,
-                        Title = str3,
-                        Location = str4,
-                        Rank = num2,
-                        AverageRank = (double)int64
+                        Id = id,
+                        FileName = fileName,
+                        Path = path,
+                        Source = (Photography.PhysicalSource)source,
+                        Title = title,
+                        Location = location,
+                        Rank = rank,
+                        AverageRank = (double)averageRank
                     };
-                    photography.ParseTags(str5);
+                    photography.ParseTags(tags);
                     entityModel.Add(photography);
                 }
             }
@@ -603,7 +485,6 @@ namespace JuanMartin.PhotoGallery.Services
         }
 
         public void AddTags(
-          string connectionString,
           int userId,
           string tags,
           IEnumerable<Photography> photographies)
@@ -611,495 +492,284 @@ namespace JuanMartin.PhotoGallery.Services
             foreach (Photography photography in photographies)
             {
                 foreach (string tag in tags.Split(','))
-                    this.AddTag(connectionString, userId, tag, photography.Id);
+                    AddTag(userId, tag, photography.Id);
             }
-        }
-
-        public int AddTag(string connectionString, int userId, string tag, long photographyId)
-        {
-            AdapterMySql adapterMySql = new AdapterMySql(connectionString);
-            Message message1 = new Message("Command", CommandType.StoredProcedure.ToString());
-            Message message2 = message1;
-            DefaultInterpolatedStringHandler interpolatedStringHandler = new DefaultInterpolatedStringHandler(19, 3);
-            interpolatedStringHandler.AppendLiteral("uspAddTag('");
-            interpolatedStringHandler.AppendFormatted<int>(userId);
-            interpolatedStringHandler.AppendLiteral("','");
-            interpolatedStringHandler.AppendFormatted(tag);
-            interpolatedStringHandler.AppendLiteral("','");
-            interpolatedStringHandler.AppendFormatted<long>(photographyId);
-            interpolatedStringHandler.AppendLiteral("')");
-            ValueHolder valueHolder = new ValueHolder("uspAddTag", (object)interpolatedStringHandler.ToStringAndClear());
-            message2.AddData((object)valueHolder);
-            message1.AddSender("Photography", typeof(Photography).ToString());
-            adapterMySql.Send((IMessage)message1);
-            return Convert.ToInt32(((IRecordSet)adapterMySql.Receive()).Data.GetAnnotationByValue((object)1).GetAnnotation("id").Value);
         }
 
         public int AddTag(int userId, string tag, long photographyId)
         {
-            if (this._dbAdapter == null)
-                throw new ApplicationException("MySql connection not set.");
-            Message message1 = new Message("Command", CommandType.StoredProcedure.ToString());
-            Message message2 = message1;
-            DefaultInterpolatedStringHandler interpolatedStringHandler = new DefaultInterpolatedStringHandler(19, 3);
-            interpolatedStringHandler.AppendLiteral("uspAddTag('");
-            interpolatedStringHandler.AppendFormatted<int>(userId);
-            interpolatedStringHandler.AppendLiteral("','");
-            interpolatedStringHandler.AppendFormatted(tag);
-            interpolatedStringHandler.AppendLiteral("','");
-            interpolatedStringHandler.AppendFormatted<long>(photographyId);
-            interpolatedStringHandler.AppendLiteral("')");
-            ValueHolder valueHolder = new ValueHolder("uspAddTag", (object)interpolatedStringHandler.ToStringAndClear());
-            message2.AddData((object)valueHolder);
-            message1.AddSender("Photography", typeof(Photography).ToString());
-            this._dbAdapter.Send((IMessage)message1);
-            return Convert.ToInt32(((IRecordSet)this._dbAdapter.Receive()).Data.GetAnnotationByValue((object)1).GetAnnotation("id").Value);
-        }
+            string retunValue = "id";
+            string command = $"uspAddTag('{userId}','{tag}','{photographyId}')";
+            var returns = ExecuteSqlStatement(typeof(Photography), command, new[] { retunValue });
+            if (returns != null)
+                returns = returns.GetAnnotationByValue(1);
 
-        public int RemoveTag(int userId, string tag, long photographyId)
+            return (returns != null) ? (int)returns.GetAnnotation(retunValue).Value : -1;
+        } 
+
+    public int RemoveTag(int userId, string tag, long photographyId)
         {
-            if (this._dbAdapter == null)
-                throw new ApplicationException("MySql connection not set.");
-            Message message1 = new Message("Command", CommandType.StoredProcedure.ToString());
-            Message message2 = message1;
-            DefaultInterpolatedStringHandler interpolatedStringHandler = new DefaultInterpolatedStringHandler(22, 3);
-            interpolatedStringHandler.AppendLiteral("uspRemoveTag('");
-            interpolatedStringHandler.AppendFormatted<int>(userId);
-            interpolatedStringHandler.AppendLiteral("','");
-            interpolatedStringHandler.AppendFormatted(tag);
-            interpolatedStringHandler.AppendLiteral("','");
-            interpolatedStringHandler.AppendFormatted<long>(photographyId);
-            interpolatedStringHandler.AppendLiteral("')");
-            ValueHolder valueHolder = new ValueHolder("uspRemoveTag", (object)interpolatedStringHandler.ToStringAndClear());
-            message2.AddData((object)valueHolder);
-            message1.AddSender("Photography", typeof(Photography).ToString());
-            this._dbAdapter.Send((IMessage)message1);
-            return Convert.ToInt32(((IRecordSet)this._dbAdapter.Receive()).Data.GetAnnotationByValue((object)1).GetAnnotation("id").Value);
+            string retunValue = "id";
+            string command = $"uspRemoveTag('{userId}','{tag}','{photographyId}')";
+            var returns = ExecuteSqlStatement(typeof(Photography), command, new[] { retunValue });
+            if (returns != null)
+                returns = returns.GetAnnotationByValue(1);
+
+            return (returns != null) ? (int)returns.GetAnnotation(retunValue).Value : -1;
         }
 
         public void ConnectUserAndRemoteHost(int userId, string remoteHost)
         {
-            if (this._dbAdapter == null)
-                throw new ApplicationException("MySql connection not set.");
-            Message message1 = new Message("Command", CommandType.StoredProcedure.ToString());
-            Message message2 = message1;
-            DefaultInterpolatedStringHandler interpolatedStringHandler = new DefaultInterpolatedStringHandler(34, 2);
-            interpolatedStringHandler.AppendLiteral("uspConnectUserAndRemoteHost('");
-            interpolatedStringHandler.AppendFormatted<int>(userId);
-            interpolatedStringHandler.AppendLiteral("','");
-            interpolatedStringHandler.AppendFormatted(remoteHost);
-            interpolatedStringHandler.AppendLiteral("')");
-            ValueHolder valueHolder = new ValueHolder("uspConnectUserAndRemoteHost", (object)interpolatedStringHandler.ToStringAndClear());
-            message2.AddData((object)valueHolder);
-            message1.AddSender("User", typeof(User).ToString());
-            this._dbAdapter.Send((IMessage)message1);
+            string command = $"uspConnectUserAndRemoteHost('{userId}','{remoteHost}')";
+            var _ = ExecuteSqlStatement(typeof(User), command);
         }
 
         public void AddAuditMessage(int userId, string meessage, string source = "", int isError = 0)
         {
-            if (this._dbAdapter == null)
-                throw new ApplicationException("MySql connection not set.");
-            Message message1 = new Message("Command", CommandType.StoredProcedure.ToString());
-            Message message2 = message1;
-            DefaultInterpolatedStringHandler interpolatedStringHandler = new DefaultInterpolatedStringHandler(30, 4);
-            interpolatedStringHandler.AppendLiteral("uspAddAuditMessage('");
-            interpolatedStringHandler.AppendFormatted<int>(userId);
-            interpolatedStringHandler.AppendLiteral("','");
-            interpolatedStringHandler.AppendFormatted(meessage);
-            interpolatedStringHandler.AppendLiteral("','");
-            interpolatedStringHandler.AppendFormatted(source);
-            interpolatedStringHandler.AppendLiteral("','");
-            interpolatedStringHandler.AppendFormatted<int>(isError);
-            interpolatedStringHandler.AppendLiteral("'");
-            ValueHolder valueHolder = new ValueHolder("uspAddAuditMessage", (object)interpolatedStringHandler.ToStringAndClear());
-            message2.AddData((object)valueHolder);
-            message1.AddSender("User", typeof(User).ToString());
-            this._dbAdapter.Send((IMessage)message1);
+            string command = $"uspAddAuditMessage('{userId}','{meessage}','{source}','{isError}'";
+            var _ = ExecuteSqlStatement(typeof(User), command);
         }
 
         public IEnumerable<Photography> GetPhotographiesBySearch(int userId, string query, int pageId = 1)
         {
-            if (this._dbAdapter == null)
+            if (_dbAdapter == null)
                 throw new ApplicationException("MySql connection not set.");
-            Message message1 = new Message("Command", CommandType.StoredProcedure.ToString());
-            Message message2 = message1;
-            DefaultInterpolatedStringHandler interpolatedStringHandler = new DefaultInterpolatedStringHandler(40, 4);
-            interpolatedStringHandler.AppendLiteral("uspGetPhotographiesBySearch('");
-            interpolatedStringHandler.AppendFormatted<int>(userId);
-            interpolatedStringHandler.AppendLiteral("','");
-            interpolatedStringHandler.AppendFormatted(query);
-            interpolatedStringHandler.AppendLiteral("','");
-            interpolatedStringHandler.AppendFormatted<int>(pageId);
-            interpolatedStringHandler.AppendLiteral("','");
-            interpolatedStringHandler.AppendFormatted<int>(this.PageSize);
-            interpolatedStringHandler.AppendLiteral("')");
-            ValueHolder valueHolder = new ValueHolder("uspGetPhotographiesBySearch", (object)interpolatedStringHandler.ToStringAndClear());
-            message2.AddData((object)valueHolder);
-            message1.AddSender("Photography", typeof(Photography).ToString());
-            this._dbAdapter.Send((IMessage)message1);
-            IRecordSet reply = (IRecordSet)this._dbAdapter.Receive();
-            return (IEnumerable<Photography>)PhotoService.MapPhotographyListFromDatabaseReplyToEntityModel(userId, reply);
+
+            string command = $"uspGetPhotographiesBySearch('{userId}','{query}','{pageId}','{PageSize}')";
+            var reply = ExecuteSqlStatement(typeof(Photography), command);
+            return PhotoService.MapPhotographyListFromDatabaseReplyToEntityModel(userId, reply);
         }
 
         public IEnumerable<string> GetAllTags(int pageId = 1)
         {
-            if (this._dbAdapter == null)
-                throw new ApplicationException("MySql connection not set.");
-            Message message1 = new Message("Command", CommandType.StoredProcedure.ToString());
-            Message message2 = message1;
-            DefaultInterpolatedStringHandler interpolatedStringHandler = new DefaultInterpolatedStringHandler(17, 2);
-            interpolatedStringHandler.AppendLiteral("uspGetTags('");
-            interpolatedStringHandler.AppendFormatted<int>(pageId);
-            interpolatedStringHandler.AppendLiteral("','");
-            interpolatedStringHandler.AppendFormatted<int>(this.PageSize);
-            interpolatedStringHandler.AppendLiteral("')");
-            ValueHolder valueHolder = new ValueHolder("uspGetTags", (object)interpolatedStringHandler.ToStringAndClear());
-            message2.AddData((object)valueHolder);
-            message1.AddSender("Tag", typeof(string).ToString());
-            this._dbAdapter.Send((IMessage)message1);
-            IRecordSet irecordSet = (IRecordSet)this._dbAdapter.Receive();
-            if (irecordSet.Data != null && irecordSet.Data.GetAnnotation("Record") != null)
+            string command = $"uspGetTags('{pageId}','{PageSize}')";
+            var reply = ExecuteSqlStatement(typeof(Photography), command);
+            if (reply != null && reply.GetAnnotation("Record") != null)
             {
-                foreach (ValueHolder annotation in irecordSet.Data.Annotations)
-                    yield return (string)annotation.GetAnnotation("Tag").Value;
+                foreach (ValueHolder annotation in reply.Annotations)
+                    yield return (string)annotation.GetAnnotation("tag").Value;
             }
         }
 
         public IEnumerable<string> GetAllLocations(int pageId = 1)
         {
-            if (this._dbAdapter == null)
-                throw new ApplicationException("MySql connection not set.");
-            Message message1 = new Message("Command", CommandType.StoredProcedure.ToString());
-            Message message2 = message1;
-            DefaultInterpolatedStringHandler interpolatedStringHandler = new DefaultInterpolatedStringHandler(22, 2);
-            interpolatedStringHandler.AppendLiteral("uspGetLocations('");
-            interpolatedStringHandler.AppendFormatted<int>(pageId);
-            interpolatedStringHandler.AppendLiteral("','");
-            interpolatedStringHandler.AppendFormatted<int>(this.PageSize);
-            interpolatedStringHandler.AppendLiteral("')");
-            ValueHolder valueHolder = new ValueHolder("uspGetLocations", (object)interpolatedStringHandler.ToStringAndClear());
-            message2.AddData((object)valueHolder);
-            message1.AddSender("Location", typeof(string).ToString());
-            this._dbAdapter.Send((IMessage)message1);
-            IRecordSet irecordSet = (IRecordSet)this._dbAdapter.Receive();
-            if (irecordSet.Data != null && irecordSet.Data.GetAnnotation("Record") != null)
+            string command = $"uspGetLocations('{pageId}','{PageSize}')";
+            var reply = ExecuteSqlStatement(typeof(Photography), command);
+            if (reply != null && reply.GetAnnotation("Record") != null)
             {
-                foreach (ValueHolder annotation in irecordSet.Data.Annotations)
-                    yield return (string)annotation.GetAnnotation("Location").Value;
+                foreach (ValueHolder annotation in reply.Annotations)
+                    yield return (string)annotation.GetAnnotation("location").Value;
             }
         }
 
         public Order GetCurrentActiveOrder(int userId)
         {
-            if (this._dbAdapter == null)
-                throw new ApplicationException("MySql connection not set.");
-            Message message1 = new Message("Command", CommandType.StoredProcedure.ToString());
-            Message message2 = message1;
-            DefaultInterpolatedStringHandler interpolatedStringHandler = new DefaultInterpolatedStringHandler(28, 1);
-            interpolatedStringHandler.AppendLiteral("uspGetCurrentActiveOrder('");
-            interpolatedStringHandler.AppendFormatted<int>(userId);
-            interpolatedStringHandler.AppendLiteral("')");
-            ValueHolder valueHolder = new ValueHolder("uspGetCurrentActiveOrder", (object)interpolatedStringHandler.ToStringAndClear());
-            message2.AddData((object)valueHolder);
-            message1.AddSender("Order", typeof(Order).ToString());
-            this._dbAdapter.Send((IMessage)message1);
-            IRecordSet reply = (IRecordSet)this._dbAdapter.Receive();
+            string command = $"uspGetCurrentActiveOrder('{userId}')";
+            var reply = ExecuteSqlStatement(typeof(Photography), command);
+            
             return PhotoService.MapOrderFromDatabaseReplyToEntityModel(userId, reply);
         }
 
         public Order GetOrder(int userId, int orderId)
         {
-            if (this._dbAdapter == null)
-                throw new ApplicationException("MySql connection not set.");
-            Message message1 = new Message("Command", CommandType.StoredProcedure.ToString());
-            Message message2 = message1;
-            DefaultInterpolatedStringHandler interpolatedStringHandler = new DefaultInterpolatedStringHandler(21, 3);
-            interpolatedStringHandler.AppendLiteral("uspGetOrder('");
-            interpolatedStringHandler.AppendFormatted<int>(orderId);
-            interpolatedStringHandler.AppendLiteral("','");
-            interpolatedStringHandler.AppendFormatted<int>(userId);
-            interpolatedStringHandler.AppendLiteral("','");
-            interpolatedStringHandler.AppendFormatted<int>(-1);
-            interpolatedStringHandler.AppendLiteral("')");
-            ValueHolder valueHolder = new ValueHolder("uspGetOrder", (object)interpolatedStringHandler.ToStringAndClear());
-            message2.AddData((object)valueHolder);
-            message1.AddSender("Order", typeof(Order).ToString());
-            this._dbAdapter.Send((IMessage)message1);
-            IRecordSet reply = (IRecordSet)this._dbAdapter.Receive();
+            string command =  $"uspGetOrder('{orderId}','{userId}','-1')";
+            var reply = ExecuteSqlStatement(typeof(Photography), command);
+
             return PhotoService.MapOrderFromDatabaseReplyToEntityModel(userId, reply);
         }
 
         public Order AddOrder(int userId)
         {
-            if (this._dbAdapter == null)
-                throw new ApplicationException("MySql connection not set.");
-            Message message1 = new Message("Command", CommandType.StoredProcedure.ToString());
-            Message message2 = message1;
-            DefaultInterpolatedStringHandler interpolatedStringHandler = new DefaultInterpolatedStringHandler(15, 1);
-            interpolatedStringHandler.AppendLiteral("uspAddOrder('");
-            interpolatedStringHandler.AppendFormatted<int>(userId);
-            interpolatedStringHandler.AppendLiteral("')");
-            ValueHolder valueHolder = new ValueHolder("uspAddOrder", (object)interpolatedStringHandler.ToStringAndClear());
-            message2.AddData((object)valueHolder);
-            message1.AddSender("Order", typeof(Order).ToString());
-            this._dbAdapter.Send((IMessage)message1);
-            IRecordSet reply = (IRecordSet)this._dbAdapter.Receive();
+            string command = $"uspAddOrder('{userId}')";
+            var reply = ExecuteSqlStatement(typeof(Photography), command);
+
             return PhotoService.MapOrderFromDatabaseReplyToEntityModel(userId, reply);
         }
 
         public bool IsPhotographyInOrder(int orderId, long photographyId, int userId)
         {
-            if (this._dbAdapter == null)
-                throw new ApplicationException("MySql connection not set.");
-            Message message1 = new Message("Command", CommandType.StoredProcedure.ToString());
-            Message message2 = message1;
-            DefaultInterpolatedStringHandler interpolatedStringHandler = new DefaultInterpolatedStringHandler(33, 3);
-            interpolatedStringHandler.AppendLiteral("uspIsPhotographyInOrder('");
-            interpolatedStringHandler.AppendFormatted<int>(orderId);
-            interpolatedStringHandler.AppendLiteral("','");
-            interpolatedStringHandler.AppendFormatted<long>(photographyId);
-            interpolatedStringHandler.AppendLiteral("','");
-            interpolatedStringHandler.AppendFormatted<int>(userId);
-            interpolatedStringHandler.AppendLiteral("')");
-            ValueHolder valueHolder = new ValueHolder("uspIsPhotographyInOrder", (object)interpolatedStringHandler.ToStringAndClear());
-            message2.AddData((object)valueHolder);
-            message1.AddSender("Order", typeof(Order).ToString());
-            this._dbAdapter.Send((IMessage)message1);
-            IRecordSet irecordSet = (IRecordSet)this._dbAdapter.Receive();
-            return irecordSet != null && irecordSet.Data != null;
+            string command = $"uspIsPhotographyInOrder('{orderId}','{photographyId}','{userId}')";
+            var reply = ExecuteSqlStatement(typeof(Photography), command);
+
+            return reply != null;
         }
 
         public IEnumerable<Photography> GetOrderPhotographies(int userId, int orderId, int pageId = 1)
         {
-            if (this._dbAdapter == null)
-                throw new ApplicationException("MySql connection not set.");
-            Message message1 = new Message("Command", CommandType.StoredProcedure.ToString());
-            Message message2 = message1;
-            DefaultInterpolatedStringHandler interpolatedStringHandler = new DefaultInterpolatedStringHandler(37, 4);
-            interpolatedStringHandler.AppendLiteral("uspGetOrderPhotographies('");
-            interpolatedStringHandler.AppendFormatted<int>(userId);
-            interpolatedStringHandler.AppendLiteral("','");
-            interpolatedStringHandler.AppendFormatted<int>(orderId);
-            interpolatedStringHandler.AppendLiteral("','");
-            interpolatedStringHandler.AppendFormatted<int>(pageId);
-            interpolatedStringHandler.AppendLiteral("','");
-            interpolatedStringHandler.AppendFormatted<int>(this.PageSize);
-            interpolatedStringHandler.AppendLiteral("')");
-            ValueHolder valueHolder = new ValueHolder("uspGetOrderPhotographies", (object)interpolatedStringHandler.ToStringAndClear());
-            message2.AddData((object)valueHolder);
-            message1.AddSender("Photography", typeof(Photography).ToString());
-            this._dbAdapter.Send((IMessage)message1);
-            IRecordSet reply = (IRecordSet)this._dbAdapter.Receive();
-            return (IEnumerable<Photography>)PhotoService.MapPhotographyListFromDatabaseReplyToEntityModel(userId, reply);
+            string command = $"uspGetOrderPhotographies('{userId}','{orderId}','{pageId}','{PageSize}')";
+            var reply = ExecuteSqlStatement(typeof(Photography), command);
+
+            return PhotoService.MapPhotographyListFromDatabaseReplyToEntityModel(userId, reply);
         }
 
         public int AddPhotographyToOrder(long photographyId, int orderId, int userId)
         {
-            if (this._dbAdapter == null)
-                throw new ApplicationException("MySql connection not set.");
-            Message message1 = new Message("Command", CommandType.StoredProcedure.ToString());
-            Message message2 = message1;
-            DefaultInterpolatedStringHandler interpolatedStringHandler = new DefaultInterpolatedStringHandler(34, 3);
-            interpolatedStringHandler.AppendLiteral("uspAddPhotographyToOrder('");
-            interpolatedStringHandler.AppendFormatted<long>(photographyId);
-            interpolatedStringHandler.AppendLiteral("','");
-            interpolatedStringHandler.AppendFormatted<int>(orderId);
-            interpolatedStringHandler.AppendLiteral("','");
-            interpolatedStringHandler.AppendFormatted<int>(userId);
-            interpolatedStringHandler.AppendLiteral("')");
-            ValueHolder valueHolder = new ValueHolder("uspAddPhotographyToOrder", (object)interpolatedStringHandler.ToStringAndClear());
-            message2.AddData((object)valueHolder);
-            message1.AddSender("Photography", typeof(Photography).ToString());
-            this._dbAdapter.Send((IMessage)message1);
-            return Convert.ToInt32(((IRecordSet)this._dbAdapter.Receive()).Data.GetAnnotationByValue((object)1).GetAnnotation("id").Value);
+            if (userId == -1)
+                return -1;
+
+            string retunValue = "id";
+            string command = $"uspAddPhotographyToOrder('{photographyId}','{orderId}','{userId}')";
+            var reply = ExecuteSqlStatement(typeof(Order), command, new[] { retunValue });
+            if (reply != null)
+                reply = reply.GetAnnotationByValue(1);
+
+            return (reply != null) ? (int)reply.GetAnnotation(retunValue).Value : -1;
         }
 
         public int RemovePhotographyFromOrder(long photographyId, int orderId, int userId)
         {
-            if (this._dbAdapter == null)
-                throw new ApplicationException("MySql connection not set.");
-            Message message1 = new Message("Command", CommandType.StoredProcedure.ToString());
-            Message message2 = message1;
-            DefaultInterpolatedStringHandler interpolatedStringHandler = new DefaultInterpolatedStringHandler(39, 3);
-            interpolatedStringHandler.AppendLiteral("uspRemovePhotographyFromOrder('");
-            interpolatedStringHandler.AppendFormatted<long>(photographyId);
-            interpolatedStringHandler.AppendLiteral("','");
-            interpolatedStringHandler.AppendFormatted<int>(orderId);
-            interpolatedStringHandler.AppendLiteral("','");
-            interpolatedStringHandler.AppendFormatted<int>(userId);
-            interpolatedStringHandler.AppendLiteral("')");
-            ValueHolder valueHolder = new ValueHolder("uspRemovePhotographyFromOrder", (object)interpolatedStringHandler.ToStringAndClear());
-            message2.AddData((object)valueHolder);
-            message1.AddSender("Photography", typeof(Photography).ToString());
-            this._dbAdapter.Send((IMessage)message1);
-            return Convert.ToInt32(((IRecordSet)this._dbAdapter.Receive()).Data.GetAnnotationByValue((object)1).GetAnnotation("id").Value);
+             if (userId == -1)
+                return -1;
+
+            string retunValue = "id";
+            string command = $"uspRemovePhotographyFromOrder('{photographyId}','{orderId}','{userId}')";
+            var reply = ExecuteSqlStatement(typeof(Order), command, new[] { retunValue });
+            if (reply != null)
+                reply = reply.GetAnnotationByValue(1);
+
+            return (reply != null) ? (int)reply.GetAnnotation(retunValue).Value : -1;
         }
 
         public int RemoveOrder(int orderId, int userId)
         {
-            if (this._dbAdapter == null)
-                throw new ApplicationException("MySql connection not set.");
-            Message message1 = new Message("Command", CommandType.StoredProcedure.ToString());
-            Message message2 = message1;
-            DefaultInterpolatedStringHandler interpolatedStringHandler = new DefaultInterpolatedStringHandler(21, 2);
-            interpolatedStringHandler.AppendLiteral("uspRemoveOrder('");
-            interpolatedStringHandler.AppendFormatted<int>(orderId);
-            interpolatedStringHandler.AppendLiteral("','");
-            interpolatedStringHandler.AppendFormatted<int>(userId);
-            interpolatedStringHandler.AppendLiteral("')");
-            ValueHolder valueHolder = new ValueHolder("uspRemoveOrder", (object)interpolatedStringHandler.ToStringAndClear());
-            message2.AddData((object)valueHolder);
-            message1.AddSender("Photography", typeof(Photography).ToString());
-            this._dbAdapter.Send((IMessage)message1);
-            return Convert.ToInt32(((IRecordSet)this._dbAdapter.Receive()).Data.GetAnnotationByValue((object)1).GetAnnotation("id").Value);
+            if (userId == -1)
+                return -1;
+
+            string retunValue = "id";
+            string command = $"uspRemoveOrder('{orderId}','{userId}')";
+            var reply = ExecuteSqlStatement(typeof(Order), command, new[] { retunValue });
+            if (reply != null)
+                reply = reply.GetAnnotationByValue(1);
+
+            return (reply != null) ? (int)reply.GetAnnotation(retunValue).Value : -1;
         }
 
         public bool UpdateOrderItemsIndices(int userId, int orderId, GalleryIndexViewModel model)
         {
-            if (model == null && !string.IsNullOrEmpty(model.CartItemsSequence))
+            if (model != null && string.IsNullOrEmpty(model.CartItemsSequence))
                 return false;
-            foreach (KeyValuePair<long, int> keyValuePair in ((IEnumerable<string>)model.CartItemsSequence.Split(',')).Select<string, string[]>((Func<string, string[]>)(s => s.Split(':'))).ToDictionary<string[], long, int>((Func<string[], long>)(a => Convert.ToInt64(a[0].Trim())), (Func<string[], int>)(a => Convert.ToInt32(a[1].Trim()))))
-                this.UpdateOrderIndex(userId, orderId, keyValuePair.Key, keyValuePair.Value);
+            foreach (KeyValuePair<long, int> keyValuePair in model.CartItemsSequence.Split(',')
+                .Select(s => s.Split(':'))
+                .ToDictionary(a => Convert.ToInt64(a[0].Trim()), a => Convert.ToInt32(a[1].Trim())))
+                UpdateOrderIndex(userId, orderId, keyValuePair.Key, keyValuePair.Value);
             return true;
         }
 
         public void UpdateOrderIndex(int userId, int orderId, long photographyId, int index)
         {
-            if (this._dbAdapter == null)
-                throw new ApplicationException("MySql connection not set.");
-            Message message1 = new Message("Command", CommandType.StoredProcedure.ToString());
-            Message message2 = message1;
-            DefaultInterpolatedStringHandler interpolatedStringHandler = new DefaultInterpolatedStringHandler(32, 4);
-            interpolatedStringHandler.AppendLiteral("uspUpdateOrderIndex('");
-            interpolatedStringHandler.AppendFormatted<int>(userId);
-            interpolatedStringHandler.AppendLiteral("','");
-            interpolatedStringHandler.AppendFormatted<int>(orderId);
-            interpolatedStringHandler.AppendLiteral("','");
-            interpolatedStringHandler.AppendFormatted<long>(photographyId);
-            interpolatedStringHandler.AppendLiteral("','");
-            interpolatedStringHandler.AppendFormatted<int>(index);
-            interpolatedStringHandler.AppendLiteral("')");
-            ValueHolder valueHolder = new ValueHolder("uspUpdateOrderIndex", (object)interpolatedStringHandler.ToStringAndClear());
-            message2.AddData((object)valueHolder);
-            message1.AddSender("Order", typeof(Order).ToString());
-            this._dbAdapter.Send((IMessage)message1);
+            string command = $"uspUpdateOrderIndex('{userId}','{orderId}','{photographyId},'{index}')";
+            var _ = ExecuteSqlStatement(typeof(User), command);
         }
 
         public IEnumerable<Photography> LoadPhotographies(
-          string connectionString,
           string directory,
           string acceptedExtensions,
           bool directoryIsLink)
         {
-            Dictionary<string, string> keyValuePairs = new Dictionary<string, string>();
-            List<Photography> photographyList = new List<Photography>();
+            Dictionary<string, string> fileNames = new();
+            List<Photography> photographyList = new();
             List<FileInfo> allFiles = UtilityFile.GetAllFiles(directory, directoryIsLink);
-            int num1 = 1;
-            foreach (FileInfo fileInfo in allFiles.Where<FileInfo>((Func<FileInfo, bool>)(f => acceptedExtensions.Contains(f.Extension))).ToList<FileInfo>())
+            int count = 1;
+            int digits = allFiles.Count.ToString().Length + 2; 
+
+            foreach (FileInfo fileInfo in allFiles.Where(f => acceptedExtensions.Contains(f.Extension)).ToList<FileInfo>())
             {
+                if (fileInfo == null) continue;
+
                 string name = fileInfo.Name;
-                string path = fileInfo.DirectoryName;
-                if (name.Length > 30)
+                string? path = fileInfo.DirectoryName;
+                if (!string.IsNullOrEmpty(path))
                 {
-                    string key = new DirectoryInfo(path).Name.Replace(' ', '_') + "_" + num1.ToString().PadLeft(5, '0') + fileInfo.Extension;
-                    keyValuePairs.Add(key, name);
-                    name = key;
-                }
-                if (path.Contains("Archive\\"))
-                {
-                    int num2 = path.IndexOf("Archive\\") + "Archive\\".Length - 1;
-                    string str = path;
-                    int startIndex = num2;
-                    path = "~\\photos" + str.Substring(startIndex, str.Length - startIndex);
-                }
-                else if (path.Contains("\\photos"))
-                {
-                    int num3 = path.IndexOf("\\photos");
-                    string str = path;
-                    int startIndex = num3;
-                    path = "~" + str.Substring(startIndex, str.Length - startIndex);
-                }
-                string title = "";
-                long num4 = this.AddPhotography(new AdapterMySql(connectionString), name, path, title);
-                if (num4 > 0L)
-                {
-                    Photography photography = new Photography()
+                    if (name.Length > 30)
                     {
-                        UserId = -1,
-                        Id = num4,
-                        FileName = name,
-                        Path = path,
-                        Source = PhotoService.GetPhotographySource(path),
-                        Title = title,
-                        Location = "",
-                        Rank = 0,
-                        AverageRank = 0.0
-                    };
-                    photographyList.Add(photography);
+                        string key = new DirectoryInfo(path).Name.Replace(' ', '_') + "_" + count.ToString().PadLeft(digits, '0') + fileInfo.Extension;
+                        count++;
+                        fileNames.Add(key, name);
+                        name = key;
+                    }
+                    if (path.Contains("Archive\\"))
+                    {
+                        int startIndex = path.IndexOf("Archive\\") + "Archive\\".Length - 1;
+                        path = string.Concat("~\\photos", path.AsSpan(startIndex, path.Length - startIndex));
+                    }
+                    else if (path.Contains("\\photos"))
+                    {
+                        int startIndex = path.IndexOf("\\photos");
+                        path = string.Concat("~", path.AsSpan(startIndex, path.Length - startIndex));
+                    }
+                    string title = "";
+                    long photographyId = AddPhotography(name, path, title);
+                    if (photographyId > 0)
+                    {
+                        Photography photography = new()
+                        {
+                            UserId = -1,
+                            Id = photographyId,
+                            FileName = name,
+                            Path = path,
+                            Source = PhotoService.GetPhotographySource(path),
+                            Title = title,
+                            Location = "",
+                            Rank = 0,
+                            AverageRank = 0.0
+                        };
+                        photographyList.Add(photography);
+                    }
                 }
-                ++num1;
             }
-            if (keyValuePairs.Count > 0)
-                PhotoService.RenameFiles(directory, keyValuePairs);
-            return (IEnumerable<Photography>)photographyList;
+            if (fileNames.Count > 0)
+                PhotoService.RenameFiles(directory, fileNames);
+            return photographyList;
         }
 
         public IEnumerable<Photography> LoadPhotographiesWithLocation(
-          string connectionString,
           string directory,
           string acceptedExtensions,
           bool directoryIsLink,
           int userId,
           string location)
         {
-            List<Photography> list = this.LoadPhotographies(connectionString, directory, acceptedExtensions, directoryIsLink).ToList<Photography>();
+            List<Photography> list = LoadPhotographies(directory, acceptedExtensions, directoryIsLink).ToList();
             foreach (Photography photography in list)
             {
-                this.UpdatePhotographyDetails(connectionString, photography.Id, userId, location);
+                UpdatePhotographyLocation(photography.Id, userId, location);
                 photography.Location = location;
             }
-            return (IEnumerable<Photography>)list;
+            return list;
         }
 
-        public long AddPhotography(AdapterMySql dbAdapter, string name, string path, string title)
+        public long AddPhotography(string name, string path, string title)
         {
-            int photographySource = (int)PhotoService.GetPhotographySource(path);
-            Message message1 = new Message("Command", CommandType.StoredProcedure.ToString());
-            Message message2 = message1;
-            DefaultInterpolatedStringHandler interpolatedStringHandler = new DefaultInterpolatedStringHandler(28, 4);
-            interpolatedStringHandler.AppendLiteral("uspAddPhotoGraphy(");
-            interpolatedStringHandler.AppendFormatted<int>(photographySource);
-            interpolatedStringHandler.AppendLiteral(",'");
-            interpolatedStringHandler.AppendFormatted(name);
-            interpolatedStringHandler.AppendLiteral("','");
-            interpolatedStringHandler.AppendFormatted(path);
-            interpolatedStringHandler.AppendLiteral("','");
-            interpolatedStringHandler.AppendFormatted(title);
-            interpolatedStringHandler.AppendLiteral("')");
-            ValueHolder valueHolder = new ValueHolder("uspAddPhotoGraphy", (object)interpolatedStringHandler.ToStringAndClear());
-            message2.AddData((object)valueHolder);
-            message1.AddSender("PhotoGraphy", typeof(Photography).ToString());
-            dbAdapter.Send((IMessage)message1);
-            IRecordSet irecordSet = (IRecordSet)dbAdapter.Receive();
-            long num = (long)irecordSet.Data.GetAnnotationByValue((object)1).GetAnnotation("id").Value;
-            return (int)irecordSet.Data.GetAnnotationByValue((object)1).GetAnnotation("response").Value != 1 ? -1L : num;
+            string retunValue = "id";
+            string command = $"uspAddPhotoGraphy('{GetPhotographySource(path)}','{name}','{path}','{title}')";
+            var reply = ExecuteSqlStatement(typeof(Photography), command, new[] { retunValue });
+            if (reply != null)
+                reply = reply.GetAnnotationByValue(1);
+
+            return (reply != null) ? (int)reply.GetAnnotation(retunValue).Value : -1;
         }
 
         private static Photography.PhysicalSource GetPhotographySource(string path)
         {
+
+            Photography.PhysicalSource source = Photography.PhysicalSource.negative;
+
             if (path.Contains("slide"))
-                return (Photography.PhysicalSource)1;
-            return path.Contains("negative") ? (Photography.PhysicalSource)0 : (Photography.PhysicalSource)2;
+                source = EnumExtensions.GetValueFromDescription<Photography.PhysicalSource>("slide");
+            else if (path.Contains("digital"))
+                source = EnumExtensions.GetValueFromDescription<Photography.PhysicalSource>("digital");
+            
+            return source;
         }
 
         private static void RenameFiles(string directory, Dictionary<string, string> keyValuePairs)
         {
             foreach (KeyValuePair<string, string> keyValuePair in keyValuePairs)
             {
-                string str = Path.Combine(directory, keyValuePair.Value);
-                string destFileName = Path.Combine(directory, keyValuePair.Key);
-                if (File.Exists(str))
-                    File.Move(str, destFileName);
+                string dbFileName = Path.Combine(directory, keyValuePair.Value);
+                string actualFileName = Path.Combine(directory, keyValuePair.Key);
+                if (File.Exists(dbFileName))
+                    File.Move(dbFileName, actualFileName);
             }
         }
     }
