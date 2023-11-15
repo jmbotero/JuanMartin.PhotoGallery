@@ -4,30 +4,31 @@
 // MVID: 4CB99D68-5881-4C4E-957B-0BF063CB63CD
 // Assembly location: C:\GitHub\temp\JuanMartin.PhotoGallery.dll
 
-using JuanMartin.PhotoGallery.Models;
 using JuanMartin.Kernel.Extesions;
+using JuanMartin.Models.Gallery;
+using JuanMartin.PhotoGallery.Models;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Mvc.Rendering;
+using System.ComponentModel;
 using System.Net;
 using System.Net.Mail;
-using System.Runtime.CompilerServices;
-using System.Text.RegularExpressions;
 using System.Text.Json;
-using System.Net.Http.Headers;
-using System.ComponentModel;
+using System.Text.RegularExpressions;
 
 namespace JuanMartin.PhotoGallery.Controllers
 {
     public class HttpUtility
     {
-        public static void InitializeSession(ISession session, IConfiguration configuration, HttpContext context)
+        public static void InitializeSession(ISession session, IConfiguration configuration, HttpContext context, User? user = null)
         {
             //"SmtpClient": {
-            session.Set("Version", configuration.GetStringConfigurationValue("Version", "1.0.0"));
-            session.Set("GuestModeEnabled", configuration.GetBooleanConfigurationValue("GuestModeEnabled", false));
-            session.Set("ConnectionString", configuration.GetStringConfigurationValue("DefaultConnection", "", "ConnectionStrings"));
-            session.Set("IsMobile", IsMobileDevice(context));
-            session.Set("IsSignedIn", false);
+            SessionExtensions.Set<ISession,string>(session, "version", configuration.GetStringConfigurationValue("Version", "1.0.0"));
+            SessionExtensions.Set<ISession, bool>(session, "guestModeEnabled", configuration.GetBooleanConfigurationValue("GuestModeEnabled", false));
+            SessionExtensions.Set<ISession, string>(session, "ConnectionString", configuration.GetStringConfigurationValue("DefaultConnection", "", "ConnectionStrings"));
+            SessionExtensions.Set<ISession, bool>(session, "isMobile", IsMobileDevice(context).IsMobile);
+            SessionExtensions.Set<ISession, bool>(session, "isSignedIn", false);
+            SessionExtensions.Set<ISession, Guid>(session, "sessionId", Guid.NewGuid());
+            if (user != null) SessionExtensions.Set<ISession, int>(session, "userId", user.UserId);
         }
         /// <summary>
         /// Get the next or previous number to a specific (current) number
@@ -202,6 +203,10 @@ namespace JuanMartin.PhotoGallery.Controllers
             Index,
             [Description("Detail")]
             Detail,
+            [Description("Login")]
+            Login,
+            [Description("Error")]
+            Erorr
         }
 
         public enum ImageRelativePosition
@@ -213,14 +218,17 @@ namespace JuanMartin.PhotoGallery.Controllers
 
     public static class SessionExtensions
     {
-        public static void Set<T>(this ISession session, string key, T value)
+        public static void Set<T, U>(this ISession session, string key, U value)
         {
             session.SetString(key, JsonSerializer.Serialize(value));
         }
 
-        public static T? Get<T>(this ISession session, string key)
+        public static object? Get<T>(this ISession session, string key)
         {
+            if (session == null)
+                throw new ArgumentNullException(nameof(session));
             var value = session.GetString(key);
+
             return value == null ? default : JsonSerializer.Deserialize<T>(value);
         }
     }

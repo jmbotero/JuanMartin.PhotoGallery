@@ -39,9 +39,9 @@ namespace JuanMartin.PhotoGallery.Services
 
         User AddUser(string userName, string password, string email);
 
-        int LoadSession(int userId);
+        Guid LoadSession(int userId);
 
-        void EndSession(int sessionId);
+        void EndSession(string? sessionId);
 
         RedirectResponseModel GetRedirectInfo(int userId, string remoteHost);
 

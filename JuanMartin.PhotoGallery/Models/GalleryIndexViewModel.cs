@@ -11,26 +11,32 @@ namespace JuanMartin.PhotoGallery.Models
 {
     public class GalleryIndexViewModel
     {
-        public const int UserID = 1;
+        //        public const int UserID = 1;
 
-        public List<Photography> Album { get; set; }
-
+        public List<Photography>? Album { get; set; }
         public long PhotographyCount { get; set; }
-
         public int PageId { get; set; }
-
         public int BlockId { get; set; }
-
-        public List<string> Tags { get; set; }
-
-        public List<string> Locations { get; set; }
-
+        public List<string>? Tags { get; set; }
+        public List<string>? Locations { get; set; }
         public string ShoppingCartAction { get; set; }
-
         public string CartItemsSequence { get; set; }
-
+        public string DropImageIndex { get; set; }
         public string DragImageIndex { get; set; }
 
-        public string DropImageIndex { get; set; }
+        public GalleryIndexViewModel()
+        {
+            Album = null;
+            PhotographyCount = 0;
+            Locations = null;
+            Tags = null;
+            PageId = 1;
+            BlockId = 1;
+
+            ShoppingCartAction = string.Empty;
+            CartItemsSequence = string.Empty;
+            DragImageIndex = string.Empty;
+            DropImageIndex = string.Empty;
+        }
     }
 }

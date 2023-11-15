@@ -11,11 +11,16 @@ namespace JuanMartin.PhotoGallery.Models
     public class RedirectResponseModel
     {
         public string RemoteHost { get; set; }
-
         public string Controller { get; set; }
-
         public string Action { get; set; }
+        public Dictionary<string, object>? RouteData { get; set; }
 
-        public Dictionary<string, object> RouteData { get; set; }
+        public RedirectResponseModel()
+        {
+            RemoteHost = string.Empty;
+            Controller = string.Empty;
+            Action = string.Empty;
+            RouteData = null;
+        }
     }
 }

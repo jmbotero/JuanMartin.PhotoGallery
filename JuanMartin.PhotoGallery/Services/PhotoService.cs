@@ -230,15 +230,19 @@ namespace JuanMartin.PhotoGallery.Services
             return user;
         }
 
-        public int LoadSession(int userId)
+        public Guid LoadSession(int userId)
         {
             string retunValue = "id";
             string command = $"uspAddSession('{userId}')";
             var reply = ExecuteSqlStatement(typeof(ISession), command, new[] { retunValue });
             if (reply != null)
                 reply = reply.GetAnnotationByValue(1);
-
-            return (reply != null) ? (int)reply.GetAnnotation(retunValue).Value : -1;
+            if (reply != null)
+            {
+                var guid = Guid.Parse((string)reply.GetAnnotation(retunValue).Value);
+                return guid;
+            }
+            return Guid.Empty;
         }
 
         public RedirectResponseModel GetRedirectInfo(int userId, string remoteHost)
@@ -377,8 +381,11 @@ namespace JuanMartin.PhotoGallery.Services
             return user;
         }
 
-        public void EndSession(int sessionId)
+        public void EndSession(string? sessionId)
         {
+            if (sessionId == null)
+                throw new ApplicationException("SessionId has not been set.");
+
             string command = $"uspEndSession('{sessionId}')";
             _ = ExecuteSqlStatement(typeof(ISession), command);
         }
