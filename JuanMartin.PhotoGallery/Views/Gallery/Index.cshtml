@@ -1,0 +1,63 @@
+﻿@using JuanMartin.Kernel.Extesions
+@*
+    For more information on enabling MVC for empty projects, visit https://go.microsoft.com/fwlink/?LinkID=397860
+*@
+@{
+	bool isMobile = ViewBag.IsMobile != null && ViewBag.IsMobile;
+	string galleryIndexContentClass = (isMobile ? "gallery-content-mobile" : "gallery-content");
+	string navigationButtonClass = (isMobile ? "btn-nav-with-text-mobile" : "btn-nav-with-text-desktop");
+	string tooltipIconClass = (isMobile ? "tooltip-icon-mobile" : "tooltip-icon-desktop");
+	string tooltipIconFile = "/" + (isMobile ? "help-icon-mobile.png" : "help-icon.png");
+	string fontSizeDeviceTypeOverride = (isMobile ? "16" : "10");
+	bool isCartView = ViewBag.DisplayPhotogrphiesAsOrder != null && ViewBag.DisplayPhotogrphiesAsOrder;
+	dynamic pageCount = ViewBag.PageCount;
+	dynamic currentPage = ViewBag.CurrentPage;
+	dynamic currentBlock = ViewBag.BlockId;
+	dynamic nextBlock = currentBlock;
+	dynamic blockSize = ViewBag.BlockSize;
+	string baseUrl = $"{Context.Request.Scheme}://{Context.Request.Host}";
+	baseUrl += "/Gallery/Index";
+	dynamic searchQuery = (ViewBag.SearchQuery == null) ? string.Empty : ViewBag.SearchQuery);
+	string queryString = $"&searchQuery={searchQuery}";
+}
+@if (!isCartView)
+{
+<div class="navbar">
+	<table>
+		<tr>
+			<td>
+				@if (Model.Tags.Count > 0)
+				{
+				<div id="tagViews" class="dropdown">
+					<button class="dropbtn">Display by Tags</button>
+					<div class="dropdown-content" style="font-size:@(fontSizeDeviceTypeOverride)">
+						@foreach (string tag in Model.Tags)
+						{
+						string t = StringExtensions.Capitalize(tag);
+						string galleryUrl = baseUrl + "?pageId=1&blockId=1&searchQuery=" + t;
+						<a href="@(galleryUrl)">@(t)</a>
+						}
+					</div>
+				</div>
+				}
+			</td>
+			<td>
+				@if (Model.Locations.Count > 0)
+				{
+				<div id="locationViews" class="dropdown">
+					<button class="dropbtn">Display by Locations</button>
+					<div class="dropdown-content" style="font-size:@(fontSizeDeviceTypeOverride)">
+						@foreach (string location in Model.Locations)
+						{
+						string l =  StringExtensions.Capitalize(location);
+						string galleryUrl = baseUrl + "?pageId=1&blockId=1&searchQuery=" + l;
+						<a href="@(galleryUrl)">@(l)</a>
+						}
+					</div>
+				</div>
+				}
+			</td>
+		</tr>
+	</table>
+</div>
+}

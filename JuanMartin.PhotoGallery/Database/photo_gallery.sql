@@ -1,0 +1,7 @@
+SET FOREIGN_KEY_CHECKS=0;
+SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
+SET time_zone = "+00:00";
+
+DROP DATABASE IF EXISTS `photo_gallery`;
+CREATE DATABASE IF NOT EXISTS `photo_gallery` DEFAULT CHARACTER SET utf8 COLLATE utf8_unicode_ci;
+USE `photo_gallery`;

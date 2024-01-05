@@ -18,4 +18,10 @@
     <ProjectReference Include="..\..\JuanMartin.Models\JuanMartin.Models\JuanMartin.Models.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Reference Include="MySql.Data">
+      <HintPath>..\..\..\Program Files (x86)\MySQL\MySQL Connector NET 8.0.32\Assemblies\net7.0\MySql.Data.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+
 </Project>

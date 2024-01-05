@@ -1,0 +1,6 @@
+USE Photo_Gallery
+
+DELIMITER //
+
+DROP FUNCTION IF EXISTS `p1`//
+CREATE DEFINER = 'root'@'localhost' FUNCTION `p1` () RETURNS INT DETERMINISTIC NO SQL return @p1//
