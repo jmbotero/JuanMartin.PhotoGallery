@@ -17,7 +17,7 @@
 	dynamic blockSize = ViewBag.BlockSize;
 	string baseUrl = $"{Context.Request.Scheme}://{Context.Request.Host}";
 	baseUrl += "/Gallery/Index";
-	dynamic searchQuery = (ViewBag.SearchQuery == null) ? string.Empty : ViewBag.SearchQuery);
+	dynamic searchQuery = (ViewBag.SearchQuery == null) ? string.Empty : ViewBag.SearchQuery;
 	string queryString = $"&searchQuery={searchQuery}";
 }
 @if (!isCartView)

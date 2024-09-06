@@ -1,10 +1,9 @@
 ﻿using JuanMartin.PhotoGallery.Controllers;
 using JuanMartin.Kernel.Extesions;
-using Microsoft.AspNetCore.Mvc;
 
 namespace JuanMartin.PhotoGallery.Test.Controllers
 {
-    public class HttpUtilityTests
+	public class HttpUtilityTests
     {
         [SetUp]
         public void Setup()
